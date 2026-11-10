@@ -65,6 +65,7 @@ object AutoPilot {
             "up" -> Game.upgrade(id?.toIntOrNull() ?: return)
             "wave" -> Game.startWave()
             "stratagem" -> Game.useStratagem()
+            "charge" -> synchronized(Game.lock) { Game.battle.fillCharge() }
             "speed" -> Game.speed = id?.toDoubleOrNull() ?: 1.0
             "select" -> Game.selected = id?.toIntOrNull()
             "view" -> Game.debugView = id?.takeIf { it != "reset" }

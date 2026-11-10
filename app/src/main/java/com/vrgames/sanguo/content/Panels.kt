@@ -104,7 +104,7 @@ fun CardPanel(c: PhysicalLengthConverter) {
         Text(l.story, fontSize = c.sz(0.017f), color = LabelInk)
         Text("新本领：${l.lesson}", fontSize = c.sz(0.016f), color = Jade)
         Text("本关计策：${l.stratagem.label}（${l.stratagem.general}）——${l.stratagem.story}。计策条满了，捏一下城楼上的${l.stratagem.general}就能用。", fontSize = c.sz(0.015f), color = Dim)
-        Text("共 ${l.waves.size} 波敌军。开局粮草 ${l.grain}，击退敌人还能缴获粮草。", fontSize = c.sz(0.015f), color = Dim)
+        Text("共 ${l.waves.size} 波敌军。开局粮草 ${l.grain}，击退敌人还能缴获粮草。天气：${com.vrgames.sanguo.render.Scenery.WEATHER_NOTE[l.id].orEmpty()}。", fontSize = c.sz(0.015f), color = Dim)
         CallToAction(c, "开始布阵 →") { Game.start() }
     }
 }

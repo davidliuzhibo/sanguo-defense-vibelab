@@ -156,6 +156,7 @@ object Game {
     fun useStratagem() {
         if (synchronized(lock) { battle.useStratagem() }) {
             sound?.play(Sfx.STRATAGEM)
+            sound?.play(com.vrgames.sanguo.render.stratagemSfx(level.stratagem))
             say("计策：${level.stratagem.label}！${level.stratagem.story}")
             changed()
         } else if (!battle.stratagemReady) {

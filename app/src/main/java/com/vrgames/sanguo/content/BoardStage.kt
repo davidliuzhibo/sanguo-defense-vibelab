@@ -265,6 +265,14 @@ fun BoardStage() {
                     .onFailure { Log.i(TAG, "model $name: ${it.message}") }
             }
             val v = BoardView(models)
+            var hitSound = 0L
+            v.onImpact = { t ->
+                val now = SystemClock.uptimeMillis()
+                if (now - hitSound > 140) {
+                    hitSound = now
+                    main.post { Game.sound?.play(if (t == com.vrgames.sanguo.core.UnitType.CATAPULT) Sfx.CRASH else Sfx.HIT) }
+                }
+            }
             place.root = v.root
             place.put()
             content.addEntity(v.root)
@@ -306,7 +314,7 @@ fun BoardStage() {
                                 main.post { Game.sound?.play(if (ev.type == com.vrgames.sanguo.core.UnitType.CATAPULT) Sfx.STONE else Sfx.SHOOT) }
                             }
                             is Battle.Event.Down -> main.post { Game.sound?.play(Sfx.PUFF) }
-                            is Battle.Event.Breach -> main.post { Game.sound?.play(Sfx.BREACH); Game.say("敌军撞到了城门！") }
+                            is Battle.Event.Breach -> main.post { Game.sound?.play(Sfx.BREACH); Game.sound?.play(Sfx.CRACK); Game.say("敌军撞到了城门！") }
                             is Battle.Event.UnitDown -> main.post { Game.say("一名枪兵被击退了，可以再派一名。") }
                             is Battle.Event.Flooded -> main.post { Game.say("汉水上涨了！低处田里的位置被淹，那里的兵已经撤回，粮草退还六成。") }
                             is Battle.Event.WaveClear -> main.post { Game.say(if (ev.wave < b.waves) "第 ${ev.wave} 波击退！布好阵，再捏「出战」。" else "最后一波也击退了！") }
@@ -317,7 +325,7 @@ fun BoardStage() {
                         if (ev !is Battle.Event.Shot) changed = true
                     }
                     if (changed) main.post { Game.changed() }
-                    v.frame(b, dt * Game.speed)
+                    v.frame(b, dt * Game.speed, dt)
                 }
             }
         },
@@ -325,7 +333,7 @@ fun BoardStage() {
 }
 
 /** Figures loaded if present (tools: Seed3D + prep_ai), else simple stand-ins. */
-private val MODELS = listOf("zhuge", "zhangfei", "guanyu", "zhouyu", "archer", "spearman", "crossbow", "catapult", "foot", "cavalry", "ram")
+private val MODELS = listOf("zhuge", "zhangfei", "guanyu", "zhouyu", "archer", "spearman", "crossbow", "catapult", "foot", "cavalry", "ram", "boat", "cheval")
 
 private val MENU_POS = Vector3(-0.36f, 0.03f, 0.3f)
 private val MENU_OPEN_POS = Vector3(-0.48f, 0.2f, 0.18f)

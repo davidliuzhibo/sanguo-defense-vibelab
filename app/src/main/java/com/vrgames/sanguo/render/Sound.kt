@@ -23,6 +23,29 @@ enum class Sfx(val file: String, val volume: Float) {
     PUFF("puff", 0.6f),
     /** Something reached the gate. */
     BREACH("breach", 0.9f),
+    // v0.2, synthesized by tools/make_battle_sounds.py.
+    /** An arrow or a thrust lands. */
+    HIT("hit", 0.55f),
+    /** A stone lands. */
+    CRASH("crash", 0.7f),
+    /** Stones crack off the gate. */
+    CRACK("crack", 0.8f),
+    FIRE("fire", 0.9f),
+    BOOM("boom", 1f),
+    WIND("wind", 0.9f),
+    WAVE("wave", 0.9f),
+    QIN("qin", 0.9f),
+    RUMBLE("rumble", 0.9f),
+}
+
+/** The sound of each stratagem's show. */
+fun stratagemSfx(s: com.vrgames.sanguo.core.Stratagem) = when (s) {
+    com.vrgames.sanguo.core.Stratagem.FIRE_ROAD -> Sfx.FIRE
+    com.vrgames.sanguo.core.Stratagem.ROAR -> Sfx.BOOM
+    com.vrgames.sanguo.core.Stratagem.EAST_WIND -> Sfx.WIND
+    com.vrgames.sanguo.core.Stratagem.FLOOD -> Sfx.WAVE
+    com.vrgames.sanguo.core.Stratagem.EMPTY_CITY -> Sfx.QIN
+    com.vrgames.sanguo.core.Stratagem.EIGHT_ARRAYS -> Sfx.RUMBLE
 }
 
 /**
@@ -36,8 +59,15 @@ class Sound(private val parent: Entity) {
     var enabled = true
 
     /** Loads every clip; a clip that fails is skipped (logged). */
-    fun load() {
-        for (s in Sfx.entries) {
+    fun load() = loadFrom(0)
+
+    /**
+     * One clip per turn of the main loop (v0.2): with the new clips, loading them all in one go held
+     * the main thread long enough for an "app not responding" on the emulator.
+     */
+    private fun loadFrom(i: Int) {
+        val s = Sfx.entries.getOrNull(i) ?: return
+        run {
             runCatching {
                 val res = AudioResource.load(s.file, "asset://audio/${s.file}.wav", LoadType.FROM_ASSETS)
                 val e = Entity()
@@ -50,6 +80,7 @@ class Sound(private val parent: Entity) {
                 }
             }.onFailure { android.util.Log.w(TAG, "sfx ${s.file}: ${it.message}") }
         }
+        android.os.Handler(android.os.Looper.getMainLooper()).post { loadFrom(i + 1) }
     }
 
     /** Plays [s] at [at] (in [parent]'s frame; by default the middle of the parent). */

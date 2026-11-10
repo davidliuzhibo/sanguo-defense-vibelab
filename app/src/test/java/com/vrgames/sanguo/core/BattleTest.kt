@@ -77,4 +77,24 @@ class BattleTest {
         assertTrue(b.useStratagem())
         assertFalse(b.stratagemReady)
     }
+
+    @Test
+    fun everyShotNamesTheEnemyItHits() {
+        // The board's hit flash and knock-back follow Shot.target: it must be a live enemy when fired.
+        val l = Levels.all[0]
+        val b = Battle(l)
+        for (m in l.plan.filter { it.beforeWave == 1 && it.type != null }) b.place(m.type!!, m.slot)
+        b.startWave()
+        var shots = 0
+        repeat(2000) {
+            val before = b.enemies.map { it.serial }.toSet()
+            val events = b.step(0.05)
+            val alive = before + b.enemies.map { it.serial }
+            for (ev in events) if (ev is Battle.Event.Shot) {
+                shots++
+                assertTrue("shot at ${ev.target} not among $alive", ev.target in alive)
+            }
+        }
+        assertTrue("no shots fired", shots > 0)
+    }
 }

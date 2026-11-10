@@ -101,7 +101,8 @@ class Battle(val level: Level) {
     }
 
     sealed interface Event {
-        data class Shot(val from: Slot, val to: P, val type: UnitType) : Event
+        /** [target] is the serial of the enemy aimed at (-1: none). */
+        data class Shot(val from: Slot, val to: P, val type: UnitType, val target: Int = -1) : Event
         data class Down(val enemy: EnemyType, val at: P) : Event
         data class Breach(val enemy: EnemyType, val damage: Int) : Event
         data class UnitDown(val slot: Slot) : Event
@@ -134,6 +135,9 @@ class Battle(val level: Level) {
     private val fires = ArrayList<Pair<Int, Double>>()
 
     val stratagemReady get() = charge >= 1.0
+
+    /** Fills the stratagem bar (the test hook, for pictures of the stratagems). */
+    fun fillCharge() { charge = 1.0 }
     val waves get() = level.waves.size
     val over get() = won || lost
     val available get() = level.units
@@ -207,8 +211,8 @@ class Battle(val level: Level) {
                 e.s = max(0.0, e.s - 0.08)
                 e.held = null
             }
-            Stratagem.EMPTY_CITY -> stall = 20.0
-            Stratagem.EIGHT_ARRAYS -> maze = 10.0
+            Stratagem.EMPTY_CITY -> stall = STALL_S
+            Stratagem.EIGHT_ARRAYS -> maze = MAZE_S
         }
         pending += Event.StratagemUsed(level.stratagem)
         return true
@@ -335,7 +339,7 @@ class Battle(val level: Level) {
             val target = (if (u.type == UnitType.SPEAR) inReach.filter { it.held === u }.ifEmpty { inReach } else inReach)
                 .maxByOrNull { it.s / level.paths[it.path].length } ?: continue
             u.cool = u.type.interval
-            out += Event.Shot(u.slot, target.at, u.type)
+            out += Event.Shot(u.slot, target.at, u.type, target.serial)
             if (u.type == UnitType.CATAPULT) {
                 val c = target.at
                 for (e in enemies) if (e.at.dist(c) < SPLASH) e.hp -= u.damage
@@ -352,5 +356,7 @@ class Battle(val level: Level) {
         const val GATE_HP = 20
         const val SPEAR_HP = 14.0
         const val SPLASH = 0.05
+        const val STALL_S = 20.0
+        const val MAZE_S = 10.0
     }
 }
