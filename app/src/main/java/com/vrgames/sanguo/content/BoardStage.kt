@@ -66,7 +66,11 @@ fun BoardStage() {
     var view by remember { mutableStateOf<BoardView?>(null) }
     val place = remember { Place() }
     val panels = remember { HashMap<String, Entity>() }
-    val drag = remember { longArrayOf(0L, 0L) } // [0]: dragging (1/0), [1]: last callback (uptime ms)
+    // [0]: what is dragged (0 none, 1 a unit from the tray, 2 the general, 3 a placed unit, 4 a sign drawn in the air), [1]: last callback (uptime ms)
+    val drag = remember { longArrayOf(0L, 0L) }
+    /** v0.3: the sign being drawn (x across, y up, metres from where the pinch began), and how far a placed unit moved. */
+    val stroke = remember { ArrayList<Pair<Double, Double>>() }
+    val moved = remember { doubleArrayOf(0.0) }
     val appVersion = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() }
 
     val toggleWindow: (String) -> Unit = { id ->
@@ -79,19 +83,47 @@ fun BoardStage() {
     }
     val letGo: (String) -> Unit = { why ->
         val v = view
-        if (v != null && drag[0] == 1L) {
+        val mode = drag[0]
+        if (v != null && mode != 0L) {
             drag[0] = 0L
-            val r = synchronized(Game.lock) { v.endDrag() }
-            Log.i(INPUT_TAG, "drop ($why) -> $r")
-            if (r != null) {
-                val (type, slot) = r
-                if (slot != null) Game.place(type, slot) else Game.say("要放在发亮的空位上：弓兵、投石车、连弩放城墙或田边，枪兵和拒马放在路上。")
+            when (mode) {
+                1L -> {
+                    val r = synchronized(Game.lock) { v.endDrag() }
+                    Log.i(INPUT_TAG, "drop ($why) -> $r")
+                    if (r != null) {
+                        val (type, slot) = r
+                        if (slot != null) Game.place(type, slot) else Game.say("要放在发亮的空位上：弓兵、投石车、连弩放城墙或田边，枪兵和拒马放在路上。")
+                    }
+                }
+                2L -> {
+                    val slot = synchronized(Game.lock) { v.endHeroDrag() }
+                    Log.i(INPUT_TAG, "hero drop ($why) -> $slot")
+                    if (slot != null) Game.placeHero(slot) else Game.say("大将要放在城墙或田边发亮的空位上。")
+                }
+                3L -> {
+                    val r = synchronized(Game.lock) { v.endMove() }
+                    Log.i(INPUT_TAG, "move ($why) -> $r moved=${moved[0]}")
+                    if (r != null) {
+                        val (from, to) = r
+                        // Hardly moved: a pinch on it, its panel opens (as a tap does).
+                        if (moved[0] < 0.02) Game.selected = from
+                        else if (to != null) Game.mergeOrMove(from, to) else Game.say("把兵拖到发亮的位置：空位就是挪过去，同一种同一级的兵就是合并升级。")
+                    }
+                }
+                4L -> {
+                    val g = com.vrgames.sanguo.core.Glyph.classify(stroke.toList())
+                    Log.i(INPUT_TAG, "sign ($why) ${stroke.size} pts -> $g")
+                    Game.cast(g, stroke.size)
+                    stroke.clear()
+                }
             }
         }
     }
 
+    com.vrgames.sanguo.platform.AppExit.TrackStage()
     DisposableEffect(Unit) {
         Game.init(context)
+        com.vrgames.sanguo.platform.AppExit.stageAlive = true
         Game.closeWindow = { id ->
             navigator.closeWindowContainer(id)
             Game.windowGone(id)
@@ -99,6 +131,7 @@ fun BoardStage() {
         val hd = runCatching { head.start() }
         Log.i(TAG, "head tracking ${hd.getOrNull() ?: hd.exceptionOrNull()?.message}")
         onDispose {
+            com.vrgames.sanguo.platform.AppExit.stageAlive = false
             runCatching { head.stop() }
             TableFinder.stop()
             subscription[0]?.cancel()
@@ -205,8 +238,25 @@ fun BoardStage() {
                                 synchronized(Game.lock) { v.beginDrag(hit.type, Game.battle) }
                                 drag[0] = 1L
                             }
-                            is BoardView.Hit.Placed -> Game.selected = hit.slot
-                            BoardView.Hit.General -> Game.useStratagem()
+                            is BoardView.Hit.Placed -> {
+                                // v0.3: a placed unit can be carried to another slot, or onto its twin to merge.
+                                Game.selected = null
+                                moved[0] = 0.0
+                                synchronized(Game.lock) { v.beginMove(hit.slot, Game.battle) }
+                                drag[0] = 3L
+                            }
+                            BoardView.Hit.HeroToken -> {
+                                Game.selected = null
+                                synchronized(Game.lock) { v.beginHeroDrag(Game.battle) }
+                                drag[0] = 2L
+                            }
+                            BoardView.Hit.Hero -> main.post { Game.useSkill() }
+                            // v0.3: the stratagem is drawn in the air with the general pinched.
+                            BoardView.Hit.General -> {
+                                stroke.clear()
+                                stroke += 0.0 to 0.0
+                                drag[0] = 4L
+                            }
                             null -> Unit
                         }
                     },
@@ -214,10 +264,19 @@ fun BoardStage() {
                     onDragCancel = { letGo("cancel") },
                 ) { value ->
                     val v = view ?: return@detectSpatialDragGesture
-                    if (drag[0] != 1L) return@detectSpatialDragGesture
+                    if (drag[0] == 0L) return@detectSpatialDragGesture
                     drag[1] = SystemClock.uptimeMillis()
                     // Room motion into the board's frame (Compose y points down; only x and z matter here).
                     val (dx, dz) = place.toBook(meters(value.dragAmount.x), meters(value.dragAmount.z))
+                    if (drag[0] == 4L) {
+                        // The sign: across and up, as the player sees it.
+                        val last = stroke.lastOrNull() ?: (0.0 to 0.0)
+                        val p = (last.first + dx) to (last.second - meters(value.dragAmount.y))
+                        stroke += p
+                        main.post { v.trail(p.first, p.second) }
+                        return@detectSpatialDragGesture
+                    }
+                    if (drag[0] == 3L) moved[0] += kotlin.math.hypot(dx, dz)
                     synchronized(Game.lock) { v.drag(Vec3(dx, 0.0, dz), Game.battle) }
                 }
             }
@@ -228,8 +287,10 @@ fun BoardStage() {
                     if (Game.phase != Game.Phase.PLAYING) return@detectSpatialTapGesture
                     when (val hit = v.hitOf(value.targetEntity)) {
                         is BoardView.Hit.Placed -> Game.selected = hit.slot
-                        BoardView.Hit.General -> Game.useStratagem()
+                        BoardView.Hit.General -> Game.generalTapped()
                         is BoardView.Hit.Token -> Game.say("捏住${hit.type.label}不放，拖到发亮的空位上再松开。")
+                        BoardView.Hit.HeroToken -> Game.say("捏住${Game.battle.hero?.label ?: "大将"}不放，拖到城墙或田边的空位上。")
+                        BoardView.Hit.Hero -> Game.useSkill()
                         null -> Unit
                     }
                 }
@@ -249,7 +310,7 @@ fun BoardStage() {
             AttachmentPanel(PANEL_RESULT) { ResultPanel(converter) }
             AttachmentPanel(PANEL_NOTE) { NotePanel(converter) }
             AttachmentPanel(PANEL_MENU) {
-                MenuPanel(converter, toggleWindow, faceMe = { Game.faceRequest++ }, quit = { context.findActivity()?.finishAndRemoveTask() }, version = appVersion)
+                MenuPanel(converter, toggleWindow, faceMe = { Game.faceRequest++ }, quit = { Game.window?.let { Game.closeWindow(it) }; com.vrgames.sanguo.platform.AppExit.finishAll(context) }, version = appVersion)
             }
         },
         update = { _, attachments -> view?.let { attach(it, attachments, panels) } },
@@ -316,6 +377,8 @@ fun BoardStage() {
                             is Battle.Event.Down -> main.post { Game.sound?.play(Sfx.PUFF) }
                             is Battle.Event.Breach -> main.post { Game.sound?.play(Sfx.BREACH); Game.sound?.play(Sfx.CRACK); Game.say("敌军撞到了城门！") }
                             is Battle.Event.UnitDown -> main.post { Game.say("一名枪兵被击退了，可以再派一名。") }
+                            is Battle.Event.Skill -> main.post { Game.sound?.play(Sfx.STRATAGEM); Game.say("${ev.hero.label}「${ev.hero.skill}」：${ev.hero.story}！") }
+                            is Battle.Event.Merged -> main.post { Game.sound?.play(Sfx.UPGRADE) }
                             is Battle.Event.Flooded -> main.post { Game.say("汉水上涨了！低处田里的位置被淹，那里的兵已经撤回，粮草退还六成。") }
                             is Battle.Event.WaveClear -> main.post { Game.say(if (ev.wave < b.waves) "第 ${ev.wave} 波击退！布好阵，再捏「出战」。" else "最后一波也击退了！") }
                             Battle.Event.Won -> main.postDelayed({ Game.finished(true) }, 1500)
@@ -333,7 +396,7 @@ fun BoardStage() {
 }
 
 /** Figures loaded if present (tools: Seed3D + prep_ai), else simple stand-ins. */
-private val MODELS = listOf("zhuge", "zhangfei", "guanyu", "zhouyu", "archer", "spearman", "crossbow", "catapult", "foot", "cavalry", "ram", "boat", "cheval")
+private val MODELS = listOf("zhuge", "zhangfei", "guanyu", "zhouyu", "archer", "spearman", "crossbow", "catapult", "foot", "cavalry", "ram", "boat", "cheval", "shield", "foegen")
 
 private val MENU_POS = Vector3(-0.36f, 0.03f, 0.3f)
 private val MENU_OPEN_POS = Vector3(-0.48f, 0.2f, 0.18f)

@@ -57,6 +57,10 @@ enum class EnemyType(val label: String, val hp: Double, val speed: Double, val b
     CAVALRY("骑兵", 7.0, 0.045, 10, 1),
     RAM("冲车", 45.0, 0.011, 30, 5),
     BOAT("战船", 18.0, 0.018, 15, 1),
+    /** v0.3: big shields — arrows and bolts do half; stones and spears full. */
+    SHIELD("盾兵", 14.0, 0.019, 12, 1),
+    /** v0.3: the enemy general — slow and tough; those near him take less (his banner steadies them). */
+    GENERAL("敌将", 80.0, 0.015, 60, 6),
 }
 
 enum class Stratagem(val label: String, val general: String, val story: String) {
@@ -92,7 +96,7 @@ class Battle(val level: Level) {
 
     inner class Enemy(val type: EnemyType, val path: Int, val serial: Int) {
         var s = 0.0
-        var hp = type.hp * level.hpScale
+        var hp = type.hp * level.hpScale * (if (level.endless) 1 + 0.06 * (wave - 1) else 1.0)
         var slowed = 0.0
         var held: Unit? = null
         var fear = 0.0
@@ -110,6 +114,10 @@ class Battle(val level: Level) {
         data class WaveClear(val wave: Int) : Event
         data class Flooded(val slots: List<Slot>) : Event
         data class StratagemUsed(val s: Stratagem) : Event
+        /** v0.3: the general's skill, from where he stands. */
+        data class Skill(val hero: Hero, val at: P) : Event
+        /** v0.3: two units became one of the next rank, at [slot]. */
+        data class Merged(val slot: Slot) : Event
         data object Won : Event
         data object Lost : Event
     }
@@ -136,6 +144,93 @@ class Battle(val level: Level) {
 
     val stratagemReady get() = charge >= 1.0
 
+    // ---- The general (v0.3) ----
+
+    val hero: Hero? get() = level.hero
+    var heroSlot: Int? = null; private set
+    /** Seconds until his skill is ready again. */
+    var heroCool = 0.0; private set
+    private var heroHit = 0.0
+    val heroReady get() = heroSlot != null && heroCool <= 0 && !over
+    /** Burning ground from 诸葛亮's 火计: where, and seconds left. */
+    private val zones = ArrayList<Pair<P, Double>>()
+
+    /** Puts the general on [slotId] (the wall or a field; once; no grain). Why not, or null. */
+    fun placeHero(slotId: Int): String? {
+        val h = hero ?: return "这一关没有随军大将。"
+        val sl = slot(slotId)
+        return when {
+            over -> "这一仗已经结束了。"
+            heroSlot != null -> "${h.label}已经上阵了。"
+            slotId in units -> "这里已经有兵了。"
+            sl.kind == SlotKind.ROAD -> "${h.label}要站在城墙或田边。"
+            sl.low && flooded -> "这里已经被水淹了。"
+            else -> { heroSlot = slotId; heroCool = Hero.FIRST; null }
+        }
+    }
+
+    /** The general's skill, if it is ready. */
+    fun useSkill(): Boolean {
+        val h = hero ?: return false
+        val at = heroSlot?.let { slot(it).at } ?: return false
+        if (!heroReady) return false
+        heroCool = Hero.COOLDOWN
+        val near = enemies.filter { it.at.dist(at) <= Hero.SKILL_REACH }
+        when (h) {
+            Hero.ZHANG -> near.forEach { it.fear = 3.5; it.held = null }
+            Hero.GUAN -> near.forEach { it.hp -= 18.0; it.s = max(0.0, it.s - 0.04); it.held = null }
+            Hero.ZHUGE -> zones += at to 5.0
+            Hero.ZHOU -> {
+                enemies.filter { it.type == EnemyType.BOAT }.forEach { it.hp -= 25.0 }
+                near.forEach { it.hp -= 8.0 }
+            }
+        }
+        pending += Event.Skill(h, at)
+        return true
+    }
+
+    // ---- Merging and moving placed units (v0.3) ----
+
+    /** Two of the same kind and rank: the one on [from] joins the one on [to], which goes up a rank (no grain). */
+    fun merge(from: Int, to: Int): String? {
+        val a = units[from] ?: return "这里没有兵。"
+        val b = units[to] ?: return "那里没有兵。"
+        return when {
+            from == to -> "要拖到另一个兵身上。"
+            a.type != b.type -> "只有同一种兵才能合并：${a.type.label}和${b.type.label}不行。"
+            a.rank != b.rank -> "只有同一级的兵才能合并（${a.rank} 级和 ${b.rank} 级）。"
+            b.rank >= 3 -> "${b.type.label}已经是最高级了。"
+            else -> {
+                units.remove(from)
+                enemies.forEach { if (it.held === a) it.held = null }
+                b.rank++
+                b.spent += a.spent
+                if (b.type == UnitType.SPEAR) b.hp = SPEAR_HP * (1 + 0.5 * (b.rank - 1))
+                pending += Event.Merged(b.slot)
+                null
+            }
+        }
+    }
+
+    /** Moves the unit on [from] to the empty slot [to] (a slot it may stand on). */
+    fun relocate(from: Int, to: Int): String? {
+        val a = units[from] ?: return "这里没有兵。"
+        val sl = slot(to)
+        return when {
+            to in units || to == heroSlot -> "那里已经有人了。"
+            sl.kind !in a.type.kinds -> "${a.type.label}不能放在那里。"
+            sl.low && flooded -> "那里已经被水淹了。"
+            else -> {
+                units.remove(from)
+                enemies.forEach { if (it.held === a) it.held = null }
+                val n = Unit(a.type, sl)
+                n.rank = a.rank; n.spent = a.spent; n.hp = a.hp
+                units[to] = n
+                null
+            }
+        }
+    }
+
     /** Fills the stratagem bar (the test hook, for pictures of the stratagems). */
     fun fillCharge() { charge = 1.0 }
     val waves get() = level.waves.size
@@ -150,7 +245,7 @@ class Battle(val level: Level) {
         return when {
             over -> "这一仗已经结束了。"
             type !in level.units -> "这一关还不能用${type.label}。"
-            slotId in units -> "这里已经有兵了。"
+            slotId in units || slotId == heroSlot -> "这里已经有兵了。"
             sl.low && flooded -> "这里已经被水淹了。"
             sl.kind !in type.kinds -> when (sl.kind) {
                 SlotKind.ROAD -> "路上只能放枪兵和拒马。"
@@ -236,6 +331,10 @@ class Battle(val level: Level) {
         fires.removeAll { it.second <= 0 }
         for ((road, _) in fires) for (e in enemies) if (e.path == road) e.hp -= 3.0 * dt
         if (maze > 0) for (e in enemies) e.hp -= 1.0 * dt
+        if (heroCool > 0) heroCool -= dt
+        zones.replaceAll { (p, left) -> p to left - dt }
+        zones.removeAll { it.second <= 0 }
+        for ((p, _) in zones) for (e in enemies) if (e.at.dist(p) <= Hero.SKILL_REACH) e.hp -= 4.0 * dt
         move(dt, out)
         fight(dt, out)
         for (e in enemies.filter { it.gone }) {
@@ -249,6 +348,7 @@ class Battle(val level: Level) {
             flooded = true
             val under = level.slots.filter { it.low }
             for (sl in under) sell(sl.id)
+            if (heroSlot?.let { slot(it).low } == true) heroSlot = null
             out += Event.Flooded(under)
         }
         if (inWave && enemies.isEmpty() && spawned.withIndex().all { (i, n) -> n >= level.waves[wave - 1][i].count }) {
@@ -342,11 +442,33 @@ class Battle(val level: Level) {
             out += Event.Shot(u.slot, target.at, u.type, target.serial)
             if (u.type == UnitType.CATAPULT) {
                 val c = target.at
-                for (e in enemies) if (e.at.dist(c) < SPLASH) e.hp -= u.damage
+                for (e in enemies) if (e.at.dist(c) < SPLASH) e.hp -= u.damage * shielded(e, u.type)
             } else {
-                target.hp -= u.damage
+                target.hp -= u.damage * shielded(target, u.type)
             }
         }
+        // The general strikes the nearest within his reach.
+        val hs = heroSlot
+        if (hs != null) {
+            heroHit -= dt
+            if (heroHit <= 0) {
+                val at = slot(hs).at
+                val t = enemies.filter { !it.gone && it.at.dist(at) <= Hero.REACH }.maxByOrNull { it.s / level.paths[it.path].length }
+                if (t != null) {
+                    heroHit = Hero.INTERVAL
+                    t.hp -= Hero.DAMAGE * shielded(t, null)
+                    out += Event.Shot(slot(hs), t.at, UnitType.SPEAR, t.serial)
+                }
+            }
+        }
+    }
+
+    /** What share of a blow lands: shields stop half the arrows and bolts; the enemy general's banner steadies those near him. */
+    private fun shielded(e: Enemy, by: UnitType?): Double {
+        var k = 1.0
+        if (e.type == EnemyType.SHIELD && (by == UnitType.ARCHER || by == UnitType.CROSSBOW)) k *= 0.5
+        if (e.type != EnemyType.GENERAL && enemies.any { it.type == EnemyType.GENERAL && !it.gone && it.at.dist(e.at) < BANNER }) k *= 0.7
+        return k
     }
 
     /** Stars: won; the gate at half or more; within the grain par. */
@@ -358,5 +480,7 @@ class Battle(val level: Level) {
         const val SPLASH = 0.05
         const val STALL_S = 20.0
         const val MAZE_S = 10.0
+        /** Within this of the enemy general, his men take less. */
+        const val BANNER = 0.08
     }
 }

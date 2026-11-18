@@ -3,6 +3,8 @@ package com.vrgames.sanguo.core
 import com.vrgames.sanguo.core.EnemyType.BOAT
 import com.vrgames.sanguo.core.EnemyType.CAVALRY
 import com.vrgames.sanguo.core.EnemyType.FOOT
+import com.vrgames.sanguo.core.EnemyType.GENERAL
+import com.vrgames.sanguo.core.EnemyType.SHIELD
 import com.vrgames.sanguo.core.EnemyType.RAM
 import com.vrgames.sanguo.core.SlotKind.FIELD
 import com.vrgames.sanguo.core.SlotKind.ROAD
@@ -47,6 +49,11 @@ class Level(
     val floodAfterWave: Int = 0,
     /** The river drawn on the table, as a list of rectangles (x0, z0, x1, z1). */
     val water: List<List<Double>> = emptyList(),
+    /** v0.3: the general who joins the battle, and where the plan (tests, test hook) puts him. */
+    val hero: Hero? = null,
+    val heroSlot: Int = -1,
+    /** v0.3: 守荆州 · 无尽 — waves keep coming; the score is how many were held. */
+    val endless: Boolean = false,
 )
 
 private fun p(x: Double, z: Double) = P(x, z)
@@ -77,7 +84,7 @@ object Levels {
                 listOf(g(FOOT, 12, every = 1.2), g(CAVALRY, 4, delay = 4.0)),
                 listOf(g(RAM, 1), g(FOOT, 10, delay = 3.0, every = 1.2)),
             ),
-            BASIC, Stratagem.FIRE_ROAD, grain = 240, grainPar = 520,
+            BASIC, Stratagem.FIRE_ROAD, grain = 240, grainPar = 520, hero = Hero.ZHANG, heroSlot = 5,
             chronicle = Chronicle(
                 "（博望坡）孔明令关羽引兵伏于豫山，张飞伏于安林，赵云为前部，……夏侯惇兵至博望，两边芦苇火起，烧得曹军大败。",
                 "诸葛亮第一次用兵，就在博望坡设下埋伏，等曹军进入狭窄的芦苇地，四面放火，大败夏侯惇。",
@@ -96,9 +103,9 @@ object Levels {
                 listOf(g(FOOT, 10, every = 1.3), g(CAVALRY, 4, delay = 5.0)),
                 listOf(g(CAVALRY, 8, every = 1.4)),
                 listOf(g(FOOT, 14, every = 1.1), g(CAVALRY, 4, delay = 6.0)),
-                listOf(g(RAM, 2, every = 6.0), g(FOOT, 10, delay = 2.0, every = 1.2)),
+                listOf(g(RAM, 2, every = 6.0), g(FOOT, 10, delay = 2.0, every = 1.2), g(GENERAL, 1, delay = 10.0)),
             ),
-            BASIC, Stratagem.ROAR, grain = 240, grainPar = 560, hpScale = 1.15,
+            BASIC, Stratagem.ROAR, grain = 240, grainPar = 560, hpScale = 1.15, hero = Hero.GUAN, heroSlot = 3,
             chronicle = Chronicle(
                 "张飞据水断桥，瞋目横矛曰：“身是张翼德也，可来共决死！”敌皆无敢近者。",
                 "张飞拆断桥梁，站在河边，瞪着眼睛横着长矛大喊：“我就是张翼德，谁敢来决一死战！”曹军没有一个人敢靠近。",
@@ -120,11 +127,11 @@ object Levels {
             listOf(
                 listOf(g(BOAT, 3, 0, every = 3.0), g(FOOT, 5, 2, delay = 4.0)),
                 listOf(g(BOAT, 3, 0, every = 3.0), g(BOAT, 3, 1, every = 3.0, delay = 2.0)),
-                listOf(g(FOOT, 10, 2, every = 1.2), g(BOAT, 4, 1, every = 2.5, delay = 4.0)),
+                listOf(g(FOOT, 8, 2, every = 1.2), g(SHIELD, 3, 2, delay = 6.0, every = 2.0), g(BOAT, 4, 1, every = 2.5, delay = 4.0)),
                 listOf(g(BOAT, 3, 0, every = 2.6), g(BOAT, 3, 1, every = 2.6), g(CAVALRY, 4, 2, delay = 6.0)),
                 listOf(g(BOAT, 4, 0, every = 2.4), g(BOAT, 4, 1, every = 2.4, delay = 1.0), g(FOOT, 8, 2, delay = 3.0)),
             ),
-            ALL, Stratagem.EAST_WIND, grain = 330, grainPar = 700, chargePerKill = 0.07, hpScale = 1.2,
+            ALL, Stratagem.EAST_WIND, grain = 330, grainPar = 700, chargePerKill = 0.07, hpScale = 1.2, hero = Hero.ZHUGE, heroSlot = 3,
             chronicle = Chronicle(
                 "时东南风急，……船如箭发，烟焰涨天，曹军人马烧溺死者甚众。",
                 "东南风刮得正急，盖着油布的火船像箭一样冲向曹军的连环船，大火冲天，曹军大败。",
@@ -146,9 +153,9 @@ object Levels {
                 listOf(g(FOOT, 8, 0, every = 1.3), g(CAVALRY, 4, 1, delay = 3.0)),
                 listOf(g(CAVALRY, 5, 0), g(FOOT, 8, 1, every = 1.3)),
                 listOf(g(FOOT, 9, 0, every = 1.2), g(FOOT, 9, 1, every = 1.2, delay = 2.0)),
-                listOf(g(RAM, 1, 0), g(RAM, 1, 1, delay = 4.0), g(CAVALRY, 4, 0, delay = 6.0), g(FOOT, 6, 1, delay = 8.0)),
+                listOf(g(RAM, 1, 0), g(RAM, 1, 1, delay = 4.0), g(CAVALRY, 4, 0, delay = 6.0), g(FOOT, 6, 1, delay = 8.0), g(GENERAL, 1, 0, delay = 12.0)),
             ),
-            ALL, Stratagem.FLOOD, grain = 300, grainPar = 800, hpScale = 1.3,
+            ALL, Stratagem.FLOOD, grain = 300, grainPar = 800, hpScale = 1.3, hero = Hero.ZHANG, heroSlot = 6,
             chronicle = Chronicle(
                 "时值秋雨，汉水暴涨，……于禁七军皆没，禁降，庞德不屈而死。",
                 "正赶上秋天连下大雨，汉水暴涨，曹将于禁率领的七支军队全被大水淹没。",
@@ -166,11 +173,11 @@ object Levels {
             listOf(
                 listOf(g(FOOT, 10, every = 1.2)),
                 listOf(g(CAVALRY, 8, every = 1.2)),
-                listOf(g(FOOT, 12, every = 1.0)),
+                listOf(g(FOOT, 9, every = 1.0), g(SHIELD, 3, delay = 5.0, every = 1.6)),
                 listOf(g(CAVALRY, 6), g(FOOT, 12, delay = 3.0, every = 1.0)),
                 listOf(g(RAM, 2, every = 5.0), g(CAVALRY, 6, delay = 2.0, every = 1.2)),
             ),
-            ALL, Stratagem.EMPTY_CITY, grain = 150, grainPar = 450, chargePerKill = 0.09, startCharge = 1.0, hpScale = 1.25,
+            ALL, Stratagem.EMPTY_CITY, grain = 150, grainPar = 450, chargePerKill = 0.09, startCharge = 1.0, hpScale = 1.25, hero = Hero.GUAN, heroSlot = 3,
             chronicle = Chronicle(
                 "孔明乃披鹤氅，戴纶巾，引二小童携琴一张，于城上敌楼前，凭栏而坐，焚香操琴。",
                 "诸葛亮穿上鹤氅、戴着纶巾，带着两个小童抱着一张琴，在城楼上靠着栏杆坐下，点上香，悠然弹琴。司马懿怀疑城里有埋伏，退兵而去。",
@@ -193,10 +200,10 @@ object Levels {
                 listOf(g(CAVALRY, 4, 0), g(FOOT, 6, 1, every = 1.3), g(CAVALRY, 4, 2, delay = 3.0)),
                 listOf(g(FOOT, 10, 0, every = 1.1), g(RAM, 1, 1), g(FOOT, 10, 2, every = 1.1, delay = 2.0)),
                 listOf(g(CAVALRY, 8, 0, every = 1.2), g(CAVALRY, 8, 2, every = 1.2), g(FOOT, 10, 1, delay = 3.0)),
-                listOf(g(FOOT, 14, 0, every = 1.0), g(FOOT, 14, 1, every = 1.0), g(FOOT, 14, 2, every = 1.0)),
-                listOf(g(RAM, 1, 0), g(RAM, 1, 1, delay = 3.0), g(RAM, 1, 2, delay = 6.0), g(CAVALRY, 7, 1, delay = 4.0, every = 1.2)),
+                listOf(g(FOOT, 12, 0, every = 1.0), g(SHIELD, 3, 0, delay = 4.0, every = 1.5), g(FOOT, 14, 1, every = 1.0), g(FOOT, 12, 2, every = 1.0), g(SHIELD, 3, 2, delay = 5.0, every = 1.5)),
+                listOf(g(RAM, 1, 0), g(RAM, 1, 1, delay = 3.0), g(RAM, 1, 2, delay = 6.0), g(CAVALRY, 7, 1, delay = 4.0, every = 1.2), g(GENERAL, 1, 1, delay = 10.0)),
             ),
-            ALL, Stratagem.EIGHT_ARRAYS, grain = 420, grainPar = 1000, hpScale = 1.45,
+            ALL, Stratagem.EIGHT_ARRAYS, grain = 420, grainPar = 1000, hpScale = 1.45, hero = Hero.GUAN, heroSlot = 6,
             chronicle = Chronicle(
                 "（八阵图）乱石作阵，……陆逊引兵入阵，忽然狂风大作，飞沙走石，遮天盖地。",
                 "诸葛亮在鱼腹浦用乱石摆下八阵图，东吴大将陆逊误入阵中，只觉得狂风大作、飞沙走石，找不到出路。",
@@ -206,5 +213,29 @@ object Levels {
         ),
     )
 
-    fun byId(id: String) = all.first { it.id == id }
+    fun byId(id: String) = if (id == "endless") endless else all.first { it.id == id }
+
+    /**
+     * 守荆州 · 无尽 (v0.3): the last battle's ground, waves without end, each a little bigger and tougher than the
+     * last (shields from the third, rams every third, an enemy general every fifth). The score is the waves held.
+     */
+    val endless: Level by lazy {
+        val j = all.last()
+        Level(
+            "endless", 7, "守荆州 · 无尽",
+            "曹军一波接一波，没有尽头。守住越多波越好。",
+            "布阵、合并升级、大将的技能和计策都要用上。",
+            j.paths, j.slots, (1..60).map { endlessWave(it) }, j.units, j.stratagem,
+            grain = 480, grainPar = Int.MAX_VALUE, chronicle = j.chronicle, plan = j.plan,
+            chargePerKill = 0.05, hpScale = 1.3, hero = Hero.GUAN, heroSlot = 6, endless = true,
+        )
+    }
+
+    fun endlessWave(n: Int): List<Group> = buildList {
+        add(g(FOOT, 6 + 2 * n, n % 3, every = maxOf(0.6, 1.4 - n * 0.04)))
+        if (n >= 2) add(g(CAVALRY, n, (n + 1) % 3, delay = 3.0, every = 1.2))
+        if (n >= 3) add(g(SHIELD, n / 2, (n + 2) % 3, delay = 5.0, every = 1.4))
+        if (n % 3 == 0) add(g(RAM, n / 3, n % 3, delay = 6.0, every = 5.0))
+        if (n % 5 == 0) add(g(GENERAL, 1, (n / 5) % 3, delay = 8.0))
+    }
 }

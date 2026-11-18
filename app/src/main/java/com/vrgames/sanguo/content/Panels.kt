@@ -103,7 +103,10 @@ fun CardPanel(c: PhysicalLengthConverter) {
         Text("第 ${l.number} 关　${l.title}", fontSize = c.sz(0.03f), color = Brass)
         Text(l.story, fontSize = c.sz(0.017f), color = LabelInk)
         Text("新本领：${l.lesson}", fontSize = c.sz(0.016f), color = Jade)
-        Text("本关计策：${l.stratagem.label}（${l.stratagem.general}）——${l.stratagem.story}。计策条满了，捏一下城楼上的${l.stratagem.general}就能用。", fontSize = c.sz(0.015f), color = Dim)
+        val sign = com.vrgames.sanguo.core.Glyph.of(l.stratagem)
+        Text("本关计策：${l.stratagem.label}（${l.stratagem.general}）——${l.stratagem.story}。计策条满了，捏住城楼上的${l.stratagem.general}不放，在空中画${sign.how}「${sign.label}」，松手就施计。", fontSize = c.sz(0.015f), color = Dim)
+        l.hero?.let { h -> Text("随军大将：${h.label}，从托盘右端拖到城墙或田边；身上发亮时捏一下他，用「${h.skill}」——${h.story}。同一种、同一级的两个兵叠在一起就合成更高一级。", fontSize = c.sz(0.015f), color = Jade) }
+        if (l.endless) Text("无尽模式：敌军一波比一波多、一波比一波强。纪录：守住 ${Game.endlessBest()} 波。", fontSize = c.sz(0.016f), color = Clay)
         Text("共 ${l.waves.size} 波敌军。开局粮草 ${l.grain}，击退敌人还能缴获粮草。天气：${com.vrgames.sanguo.render.Scenery.WEATHER_NOTE[l.id].orEmpty()}。", fontSize = c.sz(0.015f), color = Dim)
         CallToAction(c, "开始布阵 →") { Game.start() }
     }
@@ -119,7 +122,7 @@ fun HudPanel(c: PhysicalLengthConverter) {
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.014f)), verticalAlignment = Alignment.CenterVertically) {
             Text("第 ${l.number} 关 ${l.title}", fontSize = c.sz(0.02f), color = Brass)
             Text("粮草 ${b.grain}", fontSize = c.sz(0.02f), color = LabelInk)
-            Text("第 ${b.wave}/${b.waves} 波", fontSize = c.sz(0.02f), color = LabelInk)
+            Text(if (l.endless) "第 ${b.wave} 波（纪录 ${Game.endlessBest()}）" else "第 ${b.wave}/${b.waves} 波", fontSize = c.sz(0.02f), color = LabelInk)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(c.m(0.01f)), verticalAlignment = Alignment.CenterVertically) {
             Text("城门", fontSize = c.sz(0.016f), color = Dim)
@@ -134,7 +137,20 @@ fun HudPanel(c: PhysicalLengthConverter) {
             }
             b.inWave -> Text("第 ${b.wave} 波来袭！还可以继续布兵。", fontSize = c.sz(0.016f), color = Clay)
         }
-        if (b.stratagemReady && !b.over) CallToAction(c, "用计：${l.stratagem.label}（${l.stratagem.general}）") { Game.useStratagem() }
+        b.hero?.let { h ->
+            Text(
+                when {
+                    b.heroSlot == null -> "${h.label}在托盘右端，拖他上阵。"
+                    b.heroReady -> "${h.label}的「${h.skill}」准备好了：捏一下他！"
+                    else -> "${h.label}「${h.skill}」还要 ${b.heroCool.toInt() + 1} 秒"
+                },
+                fontSize = c.sz(0.015f), color = if (b.heroReady) Clay else Dim,
+            )
+        }
+        if (b.stratagemReady && !b.over) {
+            val sign = com.vrgames.sanguo.core.Glyph.of(l.stratagem)
+            Text("计策「${l.stratagem.label}」准备好了：捏住城楼上的${l.stratagem.general}，在空中画${sign.how}「${sign.label}」。", fontSize = c.sz(0.016f), color = Brass)
+        }
     }
 }
 
@@ -191,8 +207,17 @@ fun ResultPanel(c: PhysicalLengthConverter) {
             Text("★".repeat(s) + "☆".repeat(3 - s), fontSize = c.sz(0.04f), color = Brass)
             Text("★ 守住城池\n${if (b.gate >= Battle.GATE_HP / 2) "★" else "☆"} 城门耐久剩一半以上（剩 ${b.gate}/${Battle.GATE_HP}）\n${if (b.spent <= l.grainPar) "★" else "☆"} 用粮不超过 ${l.grainPar}（用了 ${b.spent}）", fontSize = c.sz(0.016f), color = LabelInk)
             val next = Game.next()
-            if (next != null) CallToAction(c, "下一关：${next.title} →") { Game.nextLevel() } else Text("六场战役全部守住！", fontSize = c.sz(0.02f), color = Jade)
+            if (next != null) CallToAction(c, "下一关：${next.title} →") { Game.nextLevel() } else {
+                Text("六场战役全部守住！", fontSize = c.sz(0.02f), color = Jade)
+                CallToAction(c, "挑战：守荆州 · 无尽 →") { Game.select("endless") }
+            }
         } else {
+            if (l.endless) {
+                Text("守住了 ${(b.wave - 1).coerceAtLeast(0)} 波", fontSize = c.sz(0.03f), color = Brass)
+                Text("纪录：${Game.endlessBest()} 波。合并升级、大将的技能和计策都用上，能守得更久。", fontSize = c.sz(0.016f), color = LabelInk)
+                CallToAction(c, "再守一次") { Game.restart() }
+                return@PanelBox
+            }
             Text("城门被攻破了", fontSize = c.sz(0.03f), color = Clay)
             Text("试试把兵集中在敌人必经的路口，用拒马让敌人走慢，计策条满了就用。", fontSize = c.sz(0.016f), color = LabelInk)
             CallToAction(c, "再守一次") { Game.restart() }

@@ -31,6 +31,7 @@ private val CardBg = Color(0x26F4EEE2)
 /** 军情图: the six battles (open one already reached), this battle's waves, and every unit and enemy. */
 @Composable
 fun IntelWindow() {
+    com.vrgames.sanguo.platform.AppExit.CloseWithStage(INTEL_ID)
     @Suppress("UNUSED_VARIABLE") val v = Game.version
     Column(
         Modifier.fillMaxSize().background(WindowBg).padding(28.dp).verticalScroll(rememberScrollState()),
@@ -54,9 +55,15 @@ fun IntelWindow() {
                 )
             }
         }
+        // v0.3: 守荆州 · 无尽, open once the six battles are held.
+        val e = Levels.endless
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { Game.select(e.id); Game.closeWindow(INTEL_ID) }, enabled = Game.open(e) && e.id != Game.level.id) { Text(e.title, fontSize = 21.sp) }
+            Text(if (Game.open(e)) "纪录：守住 ${Game.endlessBest()} 波" else "守住第 6 关后开放", fontSize = 19.sp, color = Dim)
+        }
         val l = Game.level
         Text("这一关的敌情", fontSize = 24.sp, color = Jade)
-        for ((i, w) in l.waves.withIndex()) {
+        for ((i, w) in (if (l.endless) l.waves.take(10) else l.waves).withIndex()) {
             val text = w.groupBy { it.type }.entries.joinToString("，") { (t, gs) -> "${t.label} ${gs.sumOf { it.count }}" }
             Text("第 ${i + 1} 波：$text" + if (i < Game.battle.wave) "（已击退）" else "", fontSize = 19.sp, color = if (i < Game.battle.wave) Dim else LabelInk)
         }
@@ -72,6 +79,8 @@ fun IntelWindow() {
                 EnemyType.CAVALRY -> "跑得快，血少"
                 EnemyType.RAM -> "很结实，撞到城门伤害大"
                 EnemyType.BOAT -> "从江上来，枪兵和拒马管不到它，靠弓弩和投石"
+                EnemyType.SHIELD -> "举着大盾，弓箭和连弩只打得动一半，投石和枪兵照常"
+                EnemyType.GENERAL -> "很结实，撞城门伤害大；他身边的敌兵受到的伤害少三成，先集中打他"
             }
             Text("${e.label}：$what。击退缴获粮草 ${e.bounty}。", fontSize = 18.sp, color = LabelInk)
         }
@@ -82,6 +91,7 @@ fun IntelWindow() {
 /** 战役志: each battle's lines from the 演义, plain words, and what history says. */
 @Composable
 fun ChronicleWindow() {
+    com.vrgames.sanguo.platform.AppExit.CloseWithStage(CHRONICLE_ID)
     @Suppress("UNUSED_VARIABLE") val v = Game.version
     Column(
         Modifier.fillMaxSize().background(WindowBg).padding(28.dp).verticalScroll(rememberScrollState()),

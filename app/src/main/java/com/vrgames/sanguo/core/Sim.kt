@@ -7,6 +7,8 @@ object Sim {
     /** Plays [moves] before each wave and the stratagem whenever it is ready and enemies are about. */
     fun play(level: Level, moves: List<Move> = level.plan, stratagem: Boolean = true, dt: Double = 0.05): Result {
         val b = Battle(level)
+        // v0.3: the general goes where the plan says before the first wave, and uses his skill when three are near.
+        if (level.hero != null && level.heroSlot > 0 && moves.isNotEmpty()) b.placeHero(level.heroSlot)
         var t = 0.0
         // Moves not yet affordable wait for the grain the next waves bring, as a player would.
         val waiting = ArrayList<Move>()
@@ -17,6 +19,7 @@ object Sim {
                 b.startWave()
             }
             if (stratagem && b.stratagemReady && b.enemies.size >= 4) b.useStratagem()
+            if (b.heroReady && b.heroSlot?.let { hs -> b.enemies.count { it.at.dist(b.slot(hs).at) <= Hero.SKILL_REACH } >= 3 } == true) b.useSkill()
             b.step(dt)
             t += dt
         }

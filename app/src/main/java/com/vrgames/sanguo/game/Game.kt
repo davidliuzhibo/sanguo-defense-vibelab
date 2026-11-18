@@ -82,6 +82,7 @@ object Game {
     fun select(id: String) {
         val l = Levels.byId(id)
         if (!open(l)) return
+        signMisses = 0
         level = l
         synchronized(lock) { battle = Battle(l) }
         phase = Phase.CARD
@@ -164,8 +165,77 @@ object Game {
         }
     }
 
+    // ---- v0.3: the general, signs drawn in the air, merging, 无尽 ----
+
+    fun placeHero(slot: Int) {
+        val why = synchronized(lock) { battle.placeHero(slot) }
+        changed()
+        if (why != null) { say(why); sound?.play(Sfx.WRONG); return }
+        sound?.play(Sfx.PLACE)
+        battle.hero?.let { say("${it.label}上阵！他会自己打身边的敌人；身上发亮时捏一下他，用「${it.skill}」。") }
+    }
+
+    fun useSkill() {
+        if (phase != Phase.PLAYING) return
+        val h = battle.hero ?: return
+        if (synchronized(lock) { battle.useSkill() }) { changed(); return }
+        say(if (battle.heroSlot == null) "先把${h.label}从托盘拖到城墙或田边。" else "${h.label}的「${h.skill}」还要 ${battle.heroCool.toInt() + 1} 秒。")
+    }
+
+    /** Failed signs in a row this battle: after two, a plain pinch on the general also casts (no one is left stuck). */
+    private var signMisses = 0
+
+    /** A sign drawn in the air with the general pinched ([points]: how long the stroke was, in samples). */
+    fun cast(g: com.vrgames.sanguo.core.Glyph?, points: Int) {
+        if (phase != Phase.PLAYING) return
+        val want = com.vrgames.sanguo.core.Glyph.of(level.stratagem)
+        if (points < 4) { generalTapped(); return }
+        if (!battle.stratagemReady) { say("计策条还没满：多击退几个敌人。"); return }
+        if (g == want) {
+            signMisses = 0
+            useStratagem()
+        } else {
+            signMisses++
+            sound?.play(Sfx.WRONG)
+            say("没认出来${if (g != null) "（像是「${g.label}」）" else ""}：${level.stratagem.label}要画${want.how}「${want.label}」。" + if (signMisses >= 2) "也可以直接捏一下将领。" else "")
+        }
+    }
+
+    /** A plain pinch on the tower general: tells how to draw the sign (or, after two misses, casts). */
+    fun generalTapped() {
+        if (phase != Phase.PLAYING) return
+        val want = com.vrgames.sanguo.core.Glyph.of(level.stratagem)
+        if (!battle.stratagemReady) { useStratagem(); return }
+        if (signMisses >= 2) { useStratagem(); return }
+        say("计策准备好了！捏住城楼上的${level.stratagem.general}不放，在空中画${want.how}「${want.label}」，松手就施计。")
+    }
+
+    /** A placed unit carried onto [to]: merged with its twin there, or moved if [to] is empty. */
+    fun mergeOrMove(from: Int, to: Int) {
+        val merging = synchronized(lock) { battle.units[to] } != null
+        val why = synchronized(lock) { if (merging) battle.merge(from, to) else battle.relocate(from, to) }
+        changed()
+        if (why != null) { say(why); sound?.play(Sfx.WRONG); return }
+        if (merging) say("两个兵合成了一个更高级的！") else sound?.play(Sfx.PLACE)
+    }
+
+    /** 守荆州 · 无尽: the most waves held. */
+    fun endlessBest() = prefs?.getInt("endless_best", 0) ?: 0
+
     /** Called on the main thread when the battle is won or lost. */
     fun finished(won: Boolean) {
+        if (level.endless) {
+            val held = (battle.wave - 1).coerceAtLeast(0)
+            lastStars = 0
+            if (held > endlessBest()) prefs?.edit()?.putInt("endless_best", held)?.apply()
+            phase = Phase.RESULT
+            selected = null
+            sound?.play(Sfx.LOSE)
+            say("城破了。这一次守住了 $held 波" + if (held >= endlessBest()) "，新纪录！" else "（纪录 ${endlessBest()} 波）。")
+            changed()
+            Log.i(TAG, "endless over: held $held waves")
+            return
+        }
         val s = synchronized(lock) { battle.stars() }
         lastStars = s
         if (won && s > stars(level.id)) {

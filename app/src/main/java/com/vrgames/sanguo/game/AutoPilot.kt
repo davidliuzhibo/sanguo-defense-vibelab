@@ -98,6 +98,9 @@ object AutoPilot {
             }
             Game.Phase.PLAYING -> {
                 if (b.stratagemReady && b.enemies.size >= 4) Game.useStratagem()
+                // v0.3: the general goes where the plan puts him, and uses his skill when three are near him.
+                if (b.heroSlot == null && Game.level.heroSlot > 0) Game.placeHero(Game.level.heroSlot)
+                if (b.heroReady && b.heroSlot?.let { hs -> b.enemies.count { it.at.dist(b.slot(hs).at) <= com.vrgames.sanguo.core.Hero.SKILL_REACH } >= 3 } == true) Game.useSkill()
                 if (!b.inWave && !b.over) {
                     waiting += Game.level.plan.filter { it.beforeWave == b.wave + 1 }
                     waiting.removeAll { m ->

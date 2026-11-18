@@ -79,4 +79,5 @@ class Place {
     }
 
     val heading get() = facing
+
 }

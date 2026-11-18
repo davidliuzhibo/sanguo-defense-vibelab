@@ -65,6 +65,9 @@ class BoardView(private val models: Map<String, Entity>) {
         data class Token(val type: UnitType) : Hit
         data class Placed(val slot: Int) : Hit
         data object General : Hit
+        /** v0.3: the battle's general in the tray, and on the table. */
+        data object HeroToken : Hit
+        data object Hero : Hit
     }
 
     /** A shot in flight; [e] is null for a spear's thrust (nothing flies). It lands on enemy [target]. */
@@ -124,6 +127,22 @@ class BoardView(private val models: Map<String, Entity>) {
     private val waveMat = pbr(color(0.42f, 0.62f, 0.78f), roughness = 0.15f).shared()
     private val boltMesh = MeshResource.createBox(Vector3(0.0018f, 0.0018f, 0.016f), 0f).shared()
     private val arrowMesh = MeshResource.createBox(Vector3(0.002f, 0.002f, 0.02f), 0f).shared()
+    /**
+     * v0.3.0: every mesh is a blocking call into the runtime, and a battle's board used to make ~70 new ones on
+     * the main thread (each crenel, each road leg) — on the emulator that once went past the 5 s ANR limit.
+     * Same-sized meshes now come from this cache (shared, so a cleared board does not free them), and the roads
+     * and water are one unit box scaled.
+     */
+    private val unitBox = MeshResource.createBox(Vector3(1f, 1f, 1f), 0f).shared()
+    private val meshes = HashMap<String, MeshResource>()
+    private fun boxMesh(s: Vector3, r: Float) = meshes.getOrPut("b${s.x},${s.y},${s.z},$r") { MeshResource.createBox(s, r).shared() }
+    private fun cylMesh(h: Float, r: Float) = meshes.getOrPut("c$h,$r") { MeshResource.createCylinder(h, r).shared() }
+    private fun capMesh(h: Float, r: Float) = meshes.getOrPut("p$h,$r") { MeshResource.createCapsule(h, r).shared() }
+    private val wakeMat = glow(color(0.7f, 0.85f, 1f, 0.25f)).shared()
+    private val gateMat = pbr(color(0.55f, 0.18f, 0.14f)).shared()
+    private val towerMat = pbr(color(0.2f, 0.22f, 0.26f)).shared()
+    private val heroBaseMat = pbr(color(0.9f, 0.3f, 0.2f), metallic = 0.3f, roughness = 0.5f).shared()
+    private val trayBaseMat = pbr(color(0.85f, 0.75f, 0.45f), metallic = 0.3f, roughness = 0.5f).shared()
 
     init {
         // The board: a wooden frame and the sand top, with the tray ledge at the front.
@@ -142,7 +161,20 @@ class BoardView(private val models: Map<String, Entity>) {
         unitViews.clear()
         enemyViews.values.forEach { root.removeChild(it) }
         enemyViews.clear()
-        hits.keys.filter { hits[it] is Hit.Placed || hits[it] == Hit.General }.forEach { hits.remove(it) }
+        hits.keys.filter { hits[it] is Hit.Placed || hits[it] == Hit.General || hits[it] == Hit.HeroToken || hits[it] == Hit.Hero }.forEach { hits.remove(it) }
+        heroToken?.let { root.removeChild(it) }
+        heroToken = null
+        heroView?.let { root.removeChild(it) }
+        heroView = null
+        // v0.3: the battle's general waits at the tray's right end.
+        l.hero?.let { h ->
+            heroToken = Entity().apply { setPos(Vector3(0.36f, 0.012f, D / 2 + 0.02f + TRAY_D / 2)) }.also { e ->
+                e.addChild(model(cylMesh(0.004f, 0.026f), heroBaseMat))
+                e.addChild(heroFigure(h).apply { setPos(Vector3(0f, 0.003f, 0f)) })
+                collide(e, Vector3(0.06f, 0.08f, 0.06f), Vector3(0f, 0.035f, 0f), Hit.HeroToken)
+                root.addChild(e)
+            }
+        }
         flood = null
         poses.clear(); knocked.clear()
         for (fx in fxs) fx.nodes.forEach { root.removeChild(it) }
@@ -154,11 +186,12 @@ class BoardView(private val models: Map<String, Entity>) {
         seed = l.number * 977 + 13
         scenery.build(l, WATER[l.id].orEmpty())
         for (r in WATER[l.id].orEmpty()) {
-            land.addChild(model(MeshResource.createBox(Vector3(r[2] - r[0], 0.004f, r[3] - r[1]), 0f), riverMat).apply {
+            land.addChild(model(unitBox, riverMat).apply {
+                transform().setScaleVector(Vector3(r[2] - r[0], 0.004f, r[3] - r[1]))
                 setPos(Vector3((r[0] + r[2]) / 2, TOP + 0.001f, (r[1] + r[3]) / 2))
             })
         }
-        if (l.id == "changban") land.addChild(model(MeshResource.createBox(Vector3(0.05f, 0.008f, 0.06f), 0.002f), woodMat).apply { setPos(Vector3(0f, TOP + 0.004f, -0.02f)) })
+        if (l.id == "changban") land.addChild(model(boxMesh(Vector3(0.05f, 0.008f, 0.06f), 0.002f), woodMat).apply { setPos(Vector3(0f, TOP + 0.004f, -0.02f)) })
         // Roads as strips along their segments (boats' lanes are drawn as faint wakes).
         for (path in l.paths) {
             for (i in 1 until path.points.size) {
@@ -166,21 +199,22 @@ class BoardView(private val models: Map<String, Entity>) {
                 val b = path.points[i]
                 val len = a.dist(b).toFloat()
                 val yaw = Math.toDegrees(atan2((b.x - a.x), (b.z - a.z))).toFloat()
-                val mat = if (path.water) glow(color(0.7f, 0.85f, 1f, 0.25f)) else roadMat
-                land.addChild(model(MeshResource.createBox(Vector3(if (path.water) 0.008f else 0.026f, 0.003f, len + 0.026f), 0f), mat).apply {
+                val mat = if (path.water) wakeMat else roadMat
+                land.addChild(model(unitBox, mat).apply {
+                    transform().setScaleVector(Vector3(if (path.water) 0.008f else 0.026f, 0.003f, len + 0.026f))
                     setPos(Vector3(((a.x + b.x) / 2).toFloat(), TOP + 0.002f, ((a.z + b.z) / 2).toFloat()))
                     transform().eulerAngles = EulerAngles(0f, yaw, 0f)
                 })
             }
         }
         // The city wall along the near edge, crenellated, and the gate in the middle.
-        land.addChild(model(MeshResource.createBox(Vector3(W, WALL_H, 0.03f), 0.002f), wallMat).apply { setPos(Vector3(0f, TOP + WALL_H / 2, 0.19f)) })
-        for (k in 0 until 16) land.addChild(model(MeshResource.createBox(Vector3(0.015f, 0.008f, 0.03f), 0f), wallMat).apply { setPos(Vector3(-W / 2 + 0.02f + k * (W - 0.04f) / 15, TOP + WALL_H + 0.004f, 0.19f)) })
-        gateDoor = model(MeshResource.createBox(Vector3(0.06f, 0.05f, 0.04f), 0.003f), pbr(color(0.55f, 0.18f, 0.14f))).apply { setPos(Vector3(0f, TOP + 0.045f, 0.19f)) }.also { land.addChild(it) }
-        land.addChild(model(MeshResource.createBox(Vector3(0.075f, 0.012f, 0.05f), 0.003f), pbr(color(0.2f, 0.22f, 0.26f))).apply { setPos(Vector3(0f, TOP + 0.075f, 0.19f)) })
+        land.addChild(model(boxMesh(Vector3(W, WALL_H, 0.03f), 0.002f), wallMat).apply { setPos(Vector3(0f, TOP + WALL_H / 2, 0.19f)) })
+        for (k in 0 until 16) land.addChild(model(boxMesh(Vector3(0.015f, 0.008f, 0.03f), 0f), wallMat).apply { setPos(Vector3(-W / 2 + 0.02f + k * (W - 0.04f) / 15, TOP + WALL_H + 0.004f, 0.19f)) })
+        gateDoor = model(boxMesh(Vector3(0.06f, 0.05f, 0.04f), 0.003f), gateMat).apply { setPos(Vector3(0f, TOP + 0.045f, 0.19f)) }.also { land.addChild(it) }
+        land.addChild(model(boxMesh(Vector3(0.075f, 0.012f, 0.05f), 0.003f), towerMat).apply { setPos(Vector3(0f, TOP + 0.075f, 0.19f)) })
         // The general of this battle's stratagem stands on the gate tower; pinch him when it is ready.
         // [general] is the holder, so pulsing and turning it keep the model's own scale.
-        val figure = piece(GENERALS[l.stratagem]!!, 0.07f) ?: model(MeshResource.createCapsule(0.06f, 0.012f), pbr(color(0.9f, 0.9f, 0.85f)))
+        val figure = piece(GENERALS[l.stratagem]!!, 0.07f) ?: model(capMesh(0.06f, 0.012f), pbr(color(0.9f, 0.9f, 0.85f)))
         general = Entity().apply { setPos(Vector3(0f, TOP + 0.081f, 0.19f)) }.also { holder ->
             holder.addChild(figure)
             collide(holder, Vector3(0.05f, 0.08f, 0.05f), Vector3(0f, 0.04f, 0f), Hit.General)
@@ -189,7 +223,7 @@ class BoardView(private val models: Map<String, Entity>) {
         for (sl in l.slots) {
             val y = when (sl.kind) { SlotKind.WALL -> TOP + WALL_H; else -> TOP + 0.003f }
             val v = Entity().apply { setPos(Vector3(sl.at.x.toFloat(), y, sl.at.z.toFloat())) }
-            val pad = model(MeshResource.createCylinder(0.003f, if (sl.kind == SlotKind.ROAD) 0.014f else 0.018f), padIdle)
+            val pad = model(cylMesh(0.003f, if (sl.kind == SlotKind.ROAD) 0.014f else 0.018f), padIdle)
             v.addChild(pad)
             land.addChild(v)
             slotViews[sl.id] = v
@@ -202,7 +236,7 @@ class BoardView(private val models: Map<String, Entity>) {
     private fun buildTray() {
         for ((i, t) in UnitType.entries.withIndex()) {
             val holder = Entity().apply { setPos(trayAt(i)) }
-            holder.addChild(model(MeshResource.createCylinder(0.004f, 0.022f), pbr(color(0.85f, 0.75f, 0.45f), metallic = 0.3f, roughness = 0.5f)))
+            holder.addChild(model(cylMesh(0.004f, 0.022f), trayBaseMat))
             holder.addChild(figure(t).apply { setPos(Vector3(0f, 0.003f, 0f)) })
             collide(holder, Vector3(0.05f, 0.07f, 0.05f), Vector3(0f, 0.03f, 0f), Hit.Token(t))
             root.addChild(holder)
@@ -226,13 +260,13 @@ class BoardView(private val models: Map<String, Entity>) {
     } ?: when (t) {
         UnitType.CHEVAL -> Entity().apply {
             // Crossed stakes: a 拒马.
-            for (k in -1..1) addChild(model(MeshResource.createBox(Vector3(0.004f, 0.03f, 0.004f), 0f), woodMat).apply {
+            for (k in -1..1) addChild(model(boxMesh(Vector3(0.004f, 0.03f, 0.004f), 0f), woodMat).apply {
                 setPos(Vector3(k * 0.012f, 0.012f, 0f))
                 transform().eulerAngles = EulerAngles(35f * (if (k % 2 == 0) 1 else -1), 0f, 0f)
             })
-            addChild(model(MeshResource.createBox(Vector3(0.036f, 0.004f, 0.004f), 0f), woodMat).apply { setPos(Vector3(0f, 0.012f, 0f)) })
+            addChild(model(boxMesh(Vector3(0.036f, 0.004f, 0.004f), 0f), woodMat).apply { setPos(Vector3(0f, 0.012f, 0f)) })
         }
-        else -> model(MeshResource.createCapsule(0.04f, 0.009f), pbr(UNIT_TINT[t]!!))
+        else -> model(capMesh(0.04f, 0.009f), pbr(UNIT_TINT[t]!!))
     }
 
     private fun piece(name: String, height: Float): Entity? = models[name]?.clone(Entity.CloneOptions(true, true))?.also {
@@ -280,10 +314,19 @@ class BoardView(private val models: Map<String, Entity>) {
         val g = ghost ?: return
         ghostAt = Vector3((ghostAt.x + d.x).toFloat().coerceIn(-W / 2, W / 2), TOP + 0.03f, (ghostAt.z + d.z).toFloat().coerceIn(-D / 2, D / 2 + TRAY_D))
         g.setPos(ghostAt)
-        val t = ghostType ?: return
         val here = P(ghostAt.x.toDouble(), ghostAt.z.toDouble())
-        val best = b.level.slots.filter { t in b.available && it.kind in t.kinds && it.id !in b.units && !(it.low && b.flooded) }
-            .minByOrNull { it.at.dist(here) }?.takeIf { it.at.dist(here) < SNAP }
+        val from = moveFrom
+        val best = if (ghostHero) {
+            b.level.slots.filter { heroFits(it, b) }.minByOrNull { it.at.dist(here) }?.takeIf { it.at.dist(here) < SNAP }
+        } else if (from != null) {
+            val u = b.units[from] ?: return
+            b.level.slots.filter { sl -> sl.id != from && b.units[sl.id].let { o -> (o == null && sl.kind in u.type.kinds && sl.id != b.heroSlot && !(sl.low && b.flooded)) || (o != null && o.type == u.type && o.rank == u.rank && o.rank < 3) } }
+                .minByOrNull { it.at.dist(here) }?.takeIf { it.at.dist(here) < SNAP }
+        } else {
+            val t = ghostType ?: return
+            b.level.slots.filter { t in b.available && it.kind in t.kinds && it.id !in b.units && it.id != b.heroSlot && !(it.low && b.flooded) }
+                .minByOrNull { it.at.dist(here) }?.takeIf { it.at.dist(here) < SNAP }
+        }
         if (best?.id != nearSlot) {
             nearSlot?.let { id -> slotPads[id]?.let { Assets.setMaterials(it, padOpen) } }
             best?.let { slotPads[it.id]?.let { p -> Assets.setMaterials(p, padNear) } }
@@ -291,14 +334,89 @@ class BoardView(private val models: Map<String, Entity>) {
         }
     }
 
+    // ---- v0.3: the general, moving placed units, drawing a sign ----
+
+    private var heroToken: Entity? = null
+    private var heroView: Entity? = null
+    private var ghostHero = false
+    private var moveFrom: Int? = null
+
+    private fun heroFigure(h: com.vrgames.sanguo.core.Hero): Entity = piece(h.model, 0.065f) ?: model(capMesh(0.055f, 0.011f), pbr(color(0.85f, 0.3f, 0.2f)))
+
+    /** Dragging the general from the tray: the wall and field slots free for him light up. */
+    fun beginHeroDrag(b: Battle) {
+        endDrag()
+        val h = b.hero ?: return
+        ghostHero = true
+        ghostAt = heroToken?.transform()?.position?.let { Vector3(it.x, TOP + 0.03f, it.z) } ?: Vector3(0.36f, TOP + 0.03f, D / 2)
+        ghost = heroFigure(h).also { root.addChild(it); it.setPos(ghostAt) }
+        for (sl in b.level.slots) slotPads[sl.id]?.let { Assets.setMaterials(it, if (heroFits(sl, b)) padOpen else padIdle) }
+    }
+
+    private fun heroFits(sl: com.vrgames.sanguo.core.Slot, b: Battle) = sl.kind != SlotKind.ROAD && sl.id !in b.units && sl.id != b.heroSlot && !(sl.low && b.flooded)
+
+    /** Dragging a placed unit (to move it, or onto one of its kind and rank to merge). */
+    fun beginMove(slot: Int, b: Battle) {
+        endDrag()
+        val u = b.units[slot] ?: return
+        moveFrom = slot
+        ghostType = u.type
+        ghostAt = slotViews[slot]?.transform()?.position?.let { Vector3(it.x, TOP + 0.04f, it.z) } ?: return
+        ghost = figure(u.type).also { root.addChild(it); it.setPos(ghostAt) }
+        for (sl in b.level.slots) {
+            val other = b.units[sl.id]
+            val ok = sl.id != slot && ((other == null && sl.kind in u.type.kinds && sl.id != b.heroSlot && !(sl.low && b.flooded)) || (other != null && other.type == u.type && other.rank == u.rank && other.rank < 3))
+            slotPads[sl.id]?.let { Assets.setMaterials(it, if (ok) padOpen else padIdle) }
+        }
+    }
+
+    val dragging get() = ghost != null
+    val movingFrom get() = moveFrom
+
+    /** Ends a general's drag: the slot he was let go over, or null. */
+    fun endHeroDrag(): Int? {
+        val s = nearSlot
+        endDrag()
+        return s
+    }
+
+    /** Ends a move: from where to where (the slot let go over), or null. */
+    fun endMove(): Pair<Int, Int?>? {
+        val f = moveFrom ?: return null
+        val s = nearSlot
+        endDrag()
+        return f to s
+    }
+
+    /** The sign being drawn in the air: a trail of light from the tower general, (x across, y up) metres. */
+    fun trail(x: Double, y: Double) {
+        val g = general?.transform()?.position ?: return
+        gold.emit(Vec3(g.x + x * 0.6, g.y + 0.1 + y * 0.6, g.z.toDouble() - 0.05), 2, 0.004, 0.9, 0.004f)
+    }
+
+    /** The general's skill: shown where he stands. */
+    fun skill(h: com.vrgames.sanguo.core.Hero, at: com.vrgames.sanguo.core.P) {
+        val c = Vec3(at.x, TOP + 0.02, at.z)
+        val r = com.vrgames.sanguo.core.Hero.SKILL_REACH
+        when (h) {
+            com.vrgames.sanguo.core.Hero.ZHANG -> { for (k in 0 until 24) { val a = k * Math.PI / 12; wind.emit(Vec3(c.x + r * 0.6 * kotlin.math.cos(a), c.y + 0.01, c.z + r * 0.6 * kotlin.math.sin(a)), 1, 0.25, 0.6, 0.006f) }; flash.emit(c, 6, 0.1, 0.4, 0.02f) }
+            com.vrgames.sanguo.core.Hero.GUAN -> for (k in 0 until 30) { val a = k * Math.PI / 15; sparks.emit(Vec3(c.x + r * 0.8 * kotlin.math.cos(a), c.y + 0.015, c.z + r * 0.8 * kotlin.math.sin(a)), 2, 0.05, 0.5, 0.004f) }
+            com.vrgames.sanguo.core.Hero.ZHUGE -> for (k in 0 until 40) { val a = Math.random() * 2 * Math.PI; val d = Math.random() * r; fire.emit(Vec3(c.x + d * kotlin.math.cos(a), c.y, c.z + d * kotlin.math.sin(a)), 2, 0.04, 1.2, 0.006f, Vec3(0.0, 0.05, 0.0)) }
+            com.vrgames.sanguo.core.Hero.ZHOU -> for (k in 0 until 30) fire.emit(Vec3(c.x + (Math.random() - 0.5) * 0.5, c.y, c.z - 0.1 - Math.random() * 0.15), 3, 0.05, 1.4, 0.006f, Vec3(0.0, 0.06, 0.0))
+        }
+    }
+
     /** Ends a drag; returns the unit type and the slot it was let go over (or null if none). */
     fun endDrag(): Pair<UnitType, Int?>? {
-        val t = ghostType ?: return null
+        val t = ghostType
         val slot = nearSlot
         ghost?.let { root.removeChild(it) }
         ghost = null
         ghostType = null
+        ghostHero = false
+        moveFrom = null
         nearSlot = null
+        if (t == null) { slotPads.values.forEach { Assets.setMaterials(it, padIdle) }; return null }
         slotPads.values.forEach { Assets.setMaterials(it, padIdle) }
         return t to slot
     }
@@ -341,6 +459,20 @@ class BoardView(private val models: Map<String, Entity>) {
             })
         }
         general?.let { g -> g.setScale(if (b.stratagemReady) 1.15f else 1f) }
+        // The general on the table (v0.3): put down once; pulses when his skill is ready.
+        val hs = b.heroSlot
+        val h = b.hero
+        if (hs != null && h != null && heroView == null) {
+            heroView = Entity().apply { setPos(slotViews[hs]!!.transform().position) }.also { e ->
+                e.addChild(Entity().apply { transform().eulerAngles = EulerAngles(0f, 180f, 0f); addChild(heroFigure(h)) })
+                collide(e, Vector3(0.05f, 0.08f, 0.05f), Vector3(0f, 0.035f, 0f), Hit.Hero)
+                root.addChild(e)
+            }
+            heroToken?.enabled = false
+            puff(Vec3(b.slot(hs).at.x, TOP + 0.02, b.slot(hs).at.z), small = false)
+        }
+        if (hs == null && heroView != null) { heroView?.let { hits.remove(it); root.removeChild(it) }; heroView = null; heroToken?.enabled = true }
+        heroView?.setScale(if (b.heroReady) 1.12f else 1f)
     }
 
     /** Turns placed units toward what they shoot and plays their attack: draw and loose, thrust, swing. */
@@ -520,15 +652,17 @@ class BoardView(private val models: Map<String, Entity>) {
         EnemyType.FOOT -> piece("foot", 0.045f)
         EnemyType.CAVALRY -> piece("cavalry", 0.05f)
         EnemyType.RAM -> piece("ram", 0.05f)
+        EnemyType.SHIELD -> piece("shield", 0.047f) ?: piece("foot", 0.047f)
+        EnemyType.GENERAL -> piece("foegen", 0.065f) ?: piece("foot", 0.065f)
         // The war boat model lies along x with its bow at +x: turned so the bow leads (+z).
         EnemyType.BOAT -> piece("boat", 0.07f)?.let { m -> Entity().apply { m.transform().eulerAngles = EulerAngles(0f, -90f, 0f); addChild(m) } }
     } ?: when (t) {
         EnemyType.BOAT -> Entity().apply {
-            addChild(model(MeshResource.createBox(Vector3(0.024f, 0.01f, 0.05f), 0.004f), woodMat).apply { setPos(Vector3(0f, 0.005f, 0f)) })
-            addChild(model(MeshResource.createBox(Vector3(0.022f, 0.03f, 0.002f), 0f), pbr(color(0.85f, 0.85f, 0.8f))).apply { setPos(Vector3(0f, 0.025f, 0f)) })
-            addChild(model(MeshResource.createBox(Vector3(0.004f, 0.012f, 0.004f), 0f), pbr(color(0.25f, 0.4f, 0.8f))).apply { setPos(Vector3(0f, 0.045f, 0f)) })
+            addChild(model(boxMesh(Vector3(0.024f, 0.01f, 0.05f), 0.004f), woodMat).apply { setPos(Vector3(0f, 0.005f, 0f)) })
+            addChild(model(boxMesh(Vector3(0.022f, 0.03f, 0.002f), 0f), pbr(color(0.85f, 0.85f, 0.8f))).apply { setPos(Vector3(0f, 0.025f, 0f)) })
+            addChild(model(boxMesh(Vector3(0.004f, 0.012f, 0.004f), 0f), pbr(color(0.25f, 0.4f, 0.8f))).apply { setPos(Vector3(0f, 0.045f, 0f)) })
         }
-        else -> model(MeshResource.createCapsule(0.035f, 0.008f), pbr(color(0.3f, 0.4f, 0.8f)))
+        else -> model(capMesh(0.035f, 0.008f), pbr(color(0.3f, 0.4f, 0.8f)))
     }
 
     /** Shows what a step of the battle did. */
@@ -578,12 +712,14 @@ class BoardView(private val models: Map<String, Entity>) {
             is Battle.Event.Flooded -> {
                 // The river spreads over the low fields.
                 val r = FLOOD_AREA
-                flood = model(MeshResource.createBox(Vector3(r[2] - r[0], 0.01f, r[3] - r[1]), 0f), riverMat).apply {
+                flood = model(boxMesh(Vector3(r[2] - r[0], 0.01f, r[3] - r[1]), 0f), riverMat).apply {
                     setPos(Vector3((r[0] + r[2]) / 2, TOP + 0.001f, (r[1] + r[3]) / 2))
                     transform().setScaleVector(Vector3(1f, 0.05f, 1f))
                 }.also { land.addChild(it) }
             }
             is Battle.Event.StratagemUsed -> stratagem(ev.s, b)
+            is Battle.Event.Skill -> skill(ev.hero, ev.at)
+            is Battle.Event.Merged -> gold.emit(Vec3(ev.slot.at.x, TOP + 0.05, ev.slot.at.z), 30, 0.08, 0.8, 0.004f, Vec3(0.0, 0.05, 0.0))
             else -> Unit
         }
         sync(b)
@@ -644,7 +780,7 @@ class BoardView(private val models: Map<String, Entity>) {
             }
             Stratagem.FLOOD -> {
                 // 水淹七军: a wall of water rolls down the table toward the city and sinks away.
-                val wave = model(MeshResource.createBox(Vector3(W - 0.02f, 1f, 0.05f), 0f), waveMat).apply { enabled = false }
+                val wave = model(boxMesh(Vector3(W - 0.02f, 1f, 0.05f), 0f), waveMat).apply { enabled = false }
                 root.addChild(wave)
                 fxs += Fx(2.2, listOf(wave)) { t, _ ->
                     val k = (t / 1.8).coerceIn(0.0, 1.0)
@@ -679,7 +815,7 @@ class BoardView(private val models: Map<String, Entity>) {
                 val c = Vector3(0f, TOP, -0.03f)
                 val pillars = (0 until 8).map { k ->
                     val a = k * PI / 4
-                    model(MeshResource.createBox(Vector3(0.016f, 1f, 0.016f), 0.002f), stoneMat).apply {
+                    model(boxMesh(Vector3(0.016f, 1f, 0.016f), 0.002f), stoneMat).apply {
                         setPos(Vector3((c.x + 0.15 * cos(a)).toFloat(), TOP, (c.z + 0.15 * sin(a)).toFloat()))
                         transform().setScaleVector(Vector3(1f, 0.001f, 1f))
                     }
